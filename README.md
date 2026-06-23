@@ -73,17 +73,28 @@ Your `~/data` folder will be mounted to `/root/data` within the docker, so you
 can download datasets and follow the rest of the tutorial below. On future runs,
 you can simply use `./run_docker.sh` (without `-b`) to not re-build the image.
 
+Each dataset launch file presets the sensor metadata, column shift, and point/IMU
+topics, then forwards a `bag_file:=` argument. When `bag_file` is set, the launch
+plays that ROS2 bag automatically with `--clock`; when omitted, COIN-LIO waits for
+live data instead. A ROS2 bag is a directory (containing `metadata.yaml` and a
+`.db3`/`.mcap` file), so pass the directory path, not a single `.bag` file.
+
 ## Running ENWIDE Dataset Sequences
 The ENWIDE dataset sequences can be downloaded [here](https://projects.asl.ethz.ch/datasets/enwide).
 Run a sequence:
   ```bash
-  ros2 launch coin_lio mapping_enwide.launch.py bag_file:=<example_bag_path.bag>
+  ros2 launch coin_lio mapping_enwide.launch.py bag_file:=<path/to/ros2_bag>
   ```
 ## Running Newer College Dataset Sequences
 The Newer College Dataset sequences can be downloaded [here](https://drive.google.com/drive/u/0/folders/1uR476FzjN3PfAiCknVKtuZi3_QfVvSdA).
 Run a sequence:
   ```bash
-  ros2 launch coin_lio mapping_newer_college.launch.py bag_file:=<example_bag_path.bag>
+  ros2 launch coin_lio mapping_newer_college.launch.py bag_file:=<path/to/ros2_bag>
+  ```
+## Running FieldAI Dataset Sequences
+Run a sequence recorded on the FieldAI rig (presets live in `launch/mapping_fieldai.launch.py` / `config/os_fieldai.json`):
+  ```bash
+  ros2 launch coin_lio mapping_fieldai.launch.py bag_file:=<path/to/ros2_bag>
   ```
 ## Running COIN-LIO on your own data:
 **Note on LiDAR type:** COIN-LIO currently only supports data from Ouster LiDARs, as we use the calibration in the metadata file for the image projection model. Implementing different sensors is theoretically possible but requires a proper implementation of a projection model that works for the specific sensor. Contributions are welcome.
@@ -94,22 +105,21 @@ Since different Ouster sensors have different image projection parameters, we ne
 
 It is important to use the metadata file that corresponds to your specific sensor (more information can be found [here](https://github.com/ouster-lidar/ouster-ros/wiki/index)).
   ```bash
-  ros2 launch coin_lio calibrate.launch.py bag_file:=<bag_path.bag> metadata_file:=<metadata_path.json> point_topic:=<pointcloud_topic>
+  ros2 launch coin_lio calibrate.launch.py bag_file:=<path/to/ros2_bag> metadata_file:=<metadata_path.json> point_topic:=<pointcloud_topic>
   ```
   The evaluated column shift parameter will be printed at the end of the procedure.
 * **IMU:**
 If you are not using the built-in IMU in the Ouster LiDAR, you need to adapt the extrinsic calibration between IMU and LiDAR accordingly in the [parameter file]().
 ### Run COIN-LIO with your own data
-Launch with settings for your data:
+Launch with settings for your data, passing the ROS2 bag to play:
   ```bash
-  ros2 launch coin_lio mapping.launch.py metadata_file:=<metadata_path.json> column_shift:=<parameter from calibration> point_topic:=<pointcloud_topic> imu_topic:=<imu_topic> destagger:=<true/false>
+  ros2 launch coin_lio mapping.launch.py metadata_file:=<metadata_path.json> column_shift:=<parameter from calibration> point_topic:=<pointcloud_topic> imu_topic:=<imu_topic> destagger:=<true/false> bag_file:=<path/to/ros2_bag>
   ```
   If your data already contains [destaggered point clouds from the ouster driver](https://github.com/ouster-lidar/ouster-ros/blob/55519ed2b8a7dd7d4ae13a968b0ec88e5cada7dd/launch/common.launch#L45), set `destagger:=false`, otherwise use `destagger:=true`.
-  
 
-Play your data:
+  `bag_file` is optional (the same argument is accepted by every dataset launch above). When set, the bag is played automatically with `--clock`. Omit it to run against live sensor data, or to play a bag yourself in a separate terminal:
   ```bash
-  ros2 bag play <bag_path> --clock
+  ros2 bag play <path/to/ros2_bag> --clock
   ```
 ### Line Artifact Removal
 The line artifact removal filter can be tested and tuned using the provided notebook:
