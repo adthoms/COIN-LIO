@@ -146,8 +146,15 @@ void ImageProcessor::filterBrightness(cv::Mat& img) {
 void ImageProcessor::createMask(const cv::Mat& range_img, cv::Mat& mask) {
     // Mask out ouster connector
     mask = cv::Mat::ones(range_img.rows, range_img.cols, CV_8UC1);
+    const cv::Rect img_bounds(0, 0, mask.cols, mask.rows);
     for (auto& mask_rect : masks_) {
-        mask(mask_rect) = 0;
+        // Masks are calibrated per sensor resolution; clip to the image so a mask
+        // from a wider sensor (e.g. 1024 col) can't overrun a narrower image
+        // (e.g. 512 col) and abort the node with a cv::Rect assertion.
+        const cv::Rect clipped = mask_rect & img_bounds;
+        if (clipped.area() > 0) {
+            mask(clipped) = 0;
+        }
     }
 
     #ifdef MP_EN
