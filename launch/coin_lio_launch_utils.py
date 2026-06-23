@@ -13,6 +13,13 @@ dropped. COIN-LIO never reads those keys, and passing them would make
 """
 
 import json
+import os
+
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 
 _INT_SCALAR_KEYS = {"pixels_per_column", "columns_per_frame"}
 _INT_LIST_KEYS = {"pixel_shift_by_row"}
@@ -70,3 +77,31 @@ def load_metadata(path):
     """Read an Ouster metadata JSON file, return a flat dict of ROS2 params."""
     with open(path, "r") as handle:
         return flatten_metadata(json.load(handle))
+
+
+def dataset_mapping(metadata_file, column_shift, point_topic, imu_topic):
+    """Run the generic ``mapping.launch.py`` with one dataset's presets.
+
+    Dataset launch files are just these four inputs -- metadata JSON (a name
+    under ``config/``), the calibrated column shift, and the point/IMU topics.
+    ``rviz`` and ``bag_file`` are forwarded so dataset launches keep the same
+    command-line UX as the generic launch.
+    """
+    share = get_package_share_directory("coin_lio")
+    return LaunchDescription([
+        DeclareLaunchArgument("rviz", default_value="true"),
+        DeclareLaunchArgument("bag_file", default_value=""),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(share, "launch", "mapping.launch.py")
+            ),
+            launch_arguments={
+                "metadata_file": os.path.join(share, "config", metadata_file),
+                "column_shift": str(column_shift),
+                "point_topic": point_topic,
+                "imu_topic": imu_topic,
+                "rviz": LaunchConfiguration("rviz"),
+                "bag_file": LaunchConfiguration("bag_file"),
+            }.items(),
+        ),
+    ])
