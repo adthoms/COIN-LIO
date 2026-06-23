@@ -17,7 +17,7 @@ catkin config --merge-devel
 cd $CATKIN_WS/src
 git config --global url.https://github.com/.insteadOf git@github.com:
 git config --global advice.detachedHead false
-git clone --recurse-submodules https://github.com/patripfr/COIN-LIO.git
+git clone --recurse-submodules https://github.com/ethz-asl/COIN-LIO.git
 cd COIN-LIO
 git submodule init
 git submodule update --recursive
