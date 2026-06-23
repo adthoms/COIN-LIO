@@ -974,7 +974,7 @@ int main(int argc, char** argv)
     // Mapping Params
     node->get_parameter_or("mapping.extrinsic_est_en", extrinsic_est_en, true);
     node->get_parameter_or("mapping.point_filter_num", point_filter_num_i, int64_t(4));
-    node->get_parameter_or("mapping.det_range",DET_RANGE, 300.f);
+    node->get_parameter_or("mapping.det_range",DET_RANGE, 300.0);
     node->get_parameter_or("mapping.cube_side_length",cube_len, 200.0);
     node->get_parameter_or("mapping.filter_size_map",filter_size_map_min,0.5);
     node->get_parameter_or("mapping.filter_size_surf",filter_size_surf_min,0.5);

@@ -1,6 +1,7 @@
 """Launch COIN-LIO mapping on arbitrary Ouster data (ROS2)."""
 
-import json
+import os
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -13,50 +14,9 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
-_INT_SCALAR_KEYS = {"pixels_per_column", "columns_per_frame"}
-_INT_LIST_KEYS = {"pixel_shift_by_row"}
-
-
-def _coerce_leaf(key, value):
-    """Coerce a leaf value to a ROS2-strict-typed value based on its key name."""
-    leaf = key.rsplit(".", 1)[-1]
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        if leaf in _INT_SCALAR_KEYS:
-            return int(value)
-        return float(value)
-    if isinstance(value, list):
-        if not value:
-            return value
-        if any(isinstance(el, dict) for el in value):
-            # Skip nested dicts inside lists (not present in Ouster metadata).
-            return value
-        if leaf in _INT_LIST_KEYS:
-            return [int(el) for el in value]
-        if all(isinstance(el, bool) for el in value):
-            return value
-        if all(isinstance(el, (int, float)) and not isinstance(el, bool) for el in value):
-            return [float(el) for el in value]
-        return value
-    return value
-
-
-def flatten_metadata(obj, prefix=""):
-    """Recursively flatten nested Ouster metadata into dotted-key params."""
-    flat = {}
-    for key, value in obj.items():
-        dotted = "{}.{}".format(prefix, key) if prefix else key
-        if isinstance(value, dict):
-            flat.update(flatten_metadata(value, dotted))
-        else:
-            flat[dotted] = _coerce_leaf(dotted, value)
-    return flat
-
-
-def load_metadata(path):
-    with open(path, "r") as handle:
-        return flatten_metadata(json.load(handle))
+# Import the shared metadata flattener installed alongside this launch file.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from coin_lio_launch_utils import load_metadata  # noqa: E402
 
 
 def launch_setup(context, *args, **kwargs):
@@ -76,7 +36,7 @@ def launch_setup(context, *args, **kwargs):
     overrides = {
         "common.lid_topic": point_topic,
         "common.imu_topic": imu_topic,
-        "image.u_shift": int(column_shift),
+        "image.u_shift": int(float(column_shift)),
         "image.destagger": destagger.lower() == "true",
     }
 
