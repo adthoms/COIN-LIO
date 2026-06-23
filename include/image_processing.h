@@ -6,19 +6,19 @@
 
 #include <common_lib.h>
 #include <opencv2/opencv.hpp>
-#include "ros/ros.h"
+#include <rclcpp/rclcpp.hpp>
 
 #include "feature_manager.h"
 #include "projector.h"
 
 class ImageProcessor {
   public:
-    ImageProcessor(ros::NodeHandle nh, std::shared_ptr<Projector> projector , std::shared_ptr<FeatureManager> manager);
+    ImageProcessor(rclcpp::Node::SharedPtr node, std::shared_ptr<Projector> projector , std::shared_ptr<FeatureManager> manager);
 
     void createImages(LidarFrame& frame);
 
   private:
-    void loadParameters(ros::NodeHandle nh);
+    void loadParameters(rclcpp::Node::SharedPtr node);
     void removeLines(cv::Mat& img);
     void filterBrightness(cv::Mat& img);
     void createMask(const cv::Mat& img, cv::Mat& mask);

@@ -1,8 +1,7 @@
 #ifndef COIN_LIO_PREPROCESS_H_
 #define COIN_LIO_PREPROCESS_H_
-#include <ros/ros.h>
 #include <pcl_conversions/pcl_conversions.h>
-#include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 
 using namespace std;
 
@@ -46,7 +45,7 @@ class Preprocess
   Preprocess() {}
   ~Preprocess() {}
 
-  void process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out);
+  void process(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg, PointCloudXYZI::Ptr &pcl_out);
 
   int lidar_type;
   double blind;
@@ -54,7 +53,7 @@ class Preprocess
   bool reflectivity;
 
   private:
-  void ouster_handler(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out);
+  void ouster_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg, PointCloudXYZI::Ptr &pcl_out);
 };
 
 #endif  // COIN_LIO_PREPROCESS_H_

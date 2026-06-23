@@ -3,8 +3,8 @@
 
 #include "feature_manager.h"
 
-FeatureManager::FeatureManager(ros::NodeHandle& nh, std::shared_ptr<Projector> projector) : projector_(projector) {
-    loadParameters(nh);
+FeatureManager::FeatureManager(rclcpp::Node::SharedPtr node, std::shared_ptr<Projector> projector) : projector_(projector) {
+    loadParameters(node);
 
     rows_ = projector_->rows();
     cols_ = projector_->cols();
@@ -27,29 +27,40 @@ FeatureManager::FeatureManager(ros::NodeHandle& nh, std::shared_ptr<Projector> p
     }
 
     if (debug_) {
-        moment_pub = nh.advertise<sensor_msgs::Image>("moment_image", 2000);
+        moment_pub = node->create_publisher<sensor_msgs::msg::Image>("moment_image",
+            rclcpp::QoS(rclcpp::KeepLast(20)));
     }
 }
 
-void FeatureManager::loadParameters(ros::NodeHandle& nh) {
-    nh.param<bool>("publish/debug", debug_, false);
-    nh.param<int>("image/margin", marg_size_, 10);
-    nh.param<double>("image/min_range", min_range_, 0.3);
-    nh.param<double>("image/max_range", max_range_, 20);
-    nh.param<double>("image/grad_min", thr_gradmin_, 20);
-    nh.param<double>("image/ncc_threshold", ncc_threshold_, 0.3);
-    nh.param<double>("image/range_threshold", range_threshold_, 0.2);
-    nh.param<int>("image/suppression_radius", suppression_radius_, 10);
-    nh.param<int>("image/patch_size", patch_size_, 5);
-    nh.param<int>("image/num_features", num_features_, 65);
-    nh.param<int>("image/max_lifetime", max_lifetime_, 30);
-    nh.param<string>("image/selection_mode", mode_, "comp");
+void FeatureManager::loadParameters(rclcpp::Node::SharedPtr node) {
+    node->get_parameter_or("publish.debug", debug_, false);
+    int64_t marg_size;
+    node->get_parameter_or("image.margin", marg_size, static_cast<int64_t>(10));
+    marg_size_ = static_cast<int>(marg_size);
+    node->get_parameter_or("image.min_range", min_range_, 0.3);
+    node->get_parameter_or("image.max_range", max_range_, 20.0);
+    node->get_parameter_or("image.grad_min", thr_gradmin_, 20.0);
+    node->get_parameter_or("image.ncc_threshold", ncc_threshold_, 0.3);
+    node->get_parameter_or("image.range_threshold", range_threshold_, 0.2);
+    int64_t suppression_radius;
+    node->get_parameter_or("image.suppression_radius", suppression_radius, static_cast<int64_t>(10));
+    suppression_radius_ = static_cast<int>(suppression_radius);
+    int64_t patch_size;
+    node->get_parameter_or("image.patch_size", patch_size, static_cast<int64_t>(5));
+    patch_size_ = static_cast<int>(patch_size);
+    int64_t num_features;
+    node->get_parameter_or("image.num_features", num_features, static_cast<int64_t>(65));
+    num_features_ = static_cast<int>(num_features);
+    int64_t max_lifetime;
+    node->get_parameter_or("image.max_lifetime", max_lifetime, static_cast<int64_t>(30));
+    max_lifetime_ = static_cast<int>(max_lifetime);
+    node->get_parameter_or<string>("image.selection_mode", mode_, "comp");
     if (std::find(feature_modes.begin(), feature_modes.end(), mode_) == feature_modes.end()) {
-        ROS_ERROR("Invalid mode, setting to complementary");
+        RCLCPP_ERROR(rclcpp::get_logger("coin_lio"), "Invalid mode, setting to complementary");
         mode_ = "comp";
     }
     if (patch_size_ % 2 == 0) {
-        ROS_ERROR("Patch size must be odd, setting to 5");
+        RCLCPP_ERROR(rclcpp::get_logger("coin_lio"), "Patch size must be odd, setting to 5");
         patch_size_ = 5;
     }
 }
@@ -82,7 +93,7 @@ void FeatureManager::detectFeatures(const LidarFrame& frame, const std::vector<V
         detectFeaturesRandom(frame, n_features, features_uv, features_p);
     }
     else {
-        ROS_ERROR("Invalid mode");
+        RCLCPP_ERROR(rclcpp::get_logger("coin_lio"), "Invalid mode");
         return;
     }
 
@@ -268,9 +279,9 @@ void FeatureManager::detectFeaturesComp(const LidarFrame& frame, const std::vect
     }
 
     if (debug_) {
-        sensor_msgs::ImagePtr moment_img =
+        sensor_msgs::msg::Image::SharedPtr moment_img =
         cv_bridge::CvImage(frame.header, "bgr8", moment_col).toImageMsg();
-        moment_pub.publish(moment_img);
+        moment_pub->publish(*moment_img);
     }
 }
 

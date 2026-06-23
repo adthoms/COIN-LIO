@@ -1,83 +1,88 @@
 // Copyright (c) 2024, Patrick Pfreundschuh
 // https://opensource.org/license/bsd-3-clause
 
-#include <rosbag/bag.h>
-#include <rosbag/view.h>
-#include <std_msgs/Int32.h>
-#include <std_msgs/String.h>
-#include <boost/foreach.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <rclcpp/serialization.hpp>
+#include <rosbag2_cpp/reader.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <thread>
 #include <future>
 #include <unordered_set>
 #include "preprocess.h"
 #include "projector.h"
-#include <boost/functional/hash.hpp> 
-#define foreach BOOST_FOREACH
 
 int main(int argc, char** argv)
 {
     pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
-    ros::init(argc, argv, "calibration_node");
-    ros::NodeHandle nh;
+    rclcpp::init(argc, argv);
+    rclcpp::NodeOptions opts;
+    opts.allow_undeclared_parameters(true);
+    opts.automatically_declare_parameters_from_overrides(true);
+    auto node = std::make_shared<rclcpp::Node>("calibration_node", opts);
 
     std::string bag_path;
-    nh.param<string>("bag_path", bag_path, "");
+    node->get_parameter_or("bag_path", bag_path, std::string(""));
     std::string topic;
-    nh.param<string>("topic", topic, "");
-    int n_skip;
-    nh.param<int>("n_skip", n_skip, 10);
-    int n_total;
-    nh.param<int>("n_total", n_total, 500);
+    node->get_parameter_or("topic", topic, std::string(""));
+    int64_t n_skip;
+    node->get_parameter_or("n_skip", n_skip, static_cast<int64_t>(10));
+    int64_t n_total;
+    node->get_parameter_or("n_total", n_total, static_cast<int64_t>(500));
 
     std::vector<double> lidar_to_sensor;
-    bool transform_found = nh.getParam("/lidar_to_sensor_transform", lidar_to_sensor) ||
-    nh.getParam("/lidar_intrinsics/lidar_to_sensor_transform", lidar_to_sensor);
+    bool transform_found = node->get_parameter("lidar_to_sensor_transform", lidar_to_sensor) ||
+    node->get_parameter("lidar_intrinsics.lidar_to_sensor_transform", lidar_to_sensor);
 
-    ros::param::set("image/u_shift", 0);
+    node->set_parameter(rclcpp::Parameter("image.u_shift", 0));
 
     shared_ptr<Preprocess> p_pre(new Preprocess());
     if (!transform_found || lidar_to_sensor.size() != 16) {
-        ROS_WARN("No lidar to sensor transform found, setting to default value.");
+        RCLCPP_WARN(rclcpp::get_logger("coin_lio"), "No lidar to sensor transform found, setting to default value.");
         p_pre->lidar_sensor_z_offset = 0.03618;
     } else {
         p_pre->lidar_sensor_z_offset = lidar_to_sensor[11] * 0.001;
     }
-    
+
     shared_ptr<Projector> projector;
-    nh.param<int>("preprocess/lidar_type", p_pre->lidar_type, OUSTER);
-    nh.param<double>("preprocess/blind", p_pre->blind, 0.5);
-    projector = std::make_shared<Projector>(nh);
+    int64_t lidar_type;
+    node->get_parameter_or("preprocess.lidar_type", lidar_type, static_cast<int64_t>(OUSTER));
+    p_pre->lidar_type = static_cast<int>(lidar_type);
+    node->get_parameter_or("preprocess.blind", p_pre->blind, 0.5);
+    projector = std::make_shared<Projector>(node);
 
 
     std::cout << "Loading Bag from Path: " << bag_path << std::endl;
-    rosbag::Bag bag;
-    bag.open(bag_path, rosbag::bagmode::Read);
+    rosbag2_cpp::Reader reader;
+    reader.open(bag_path);
 
     std::cout << "Loading Clouds from Topic: " << topic << std::endl;
-    rosbag::View view(bag, rosbag::TopicQuery({topic}));
 
     std::cout << "Processing Clouds, this can take a while." << std::endl;
+
+    rclcpp::Serialization<sensor_msgs::msg::PointCloud2> serialization;
 
     double u_shift = 0.;
     int point_count = 0;
     int cloud_count = 0;
     int cloud_count_total = 0;
-    foreach(rosbag::MessageInstance const m, view)
+    while (reader.has_next())
     {
-        if (m.getTopic() != topic)
+        auto bag_msg = reader.read_next();
+        if (bag_msg->topic_name != topic)
         {
             continue;
         }
-        sensor_msgs::PointCloud2::ConstPtr msg = m.instantiate<sensor_msgs::PointCloud2>();
-        if (msg == NULL) continue;
+        rclcpp::SerializedMessage serialized_msg(*bag_msg->serialized_data);
+        auto msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
+        serialization.deserialize_message(&serialized_msg, msg.get());
         cloud_count_total++;
         if (cloud_count_total % n_skip != 0) continue;
         PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
-        p_pre->process(msg, ptr);   
+        p_pre->process(msg, ptr);
         if (ptr->empty()) continue;
         cloud_count++;
         if (cloud_count > n_total) break;
-        LidarFrame current_frame;  
+        LidarFrame current_frame;
         current_frame.points_corrected = ptr;
         current_frame.T_Li_Lk_vec = std::vector<M4D>(ptr->size(), M4D::Identity());
         current_frame.vec_idx = std::vector<int>(ptr->size(), 0);
@@ -101,9 +106,10 @@ int main(int argc, char** argv)
 
     std::cout << "Processed " << cloud_count << " clouds out of " << cloud_count_total << std::endl;
     std::cout << "Calculated Column Shift: " << std::round(u_shift) << std::endl;
-    bag.close();
+    reader.close();
 
+    rclcpp::shutdown();
     return 0;
 
-    
+
 }

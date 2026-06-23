@@ -37,23 +37,30 @@
 // CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
-#include <boost/filesystem.hpp>
-#include <cv_bridge/cv_bridge.h>
-#include <geometry_msgs/Vector3.h>
+#include <ament_index_cpp/get_package_share_directory.hpp>
+#include <cv_bridge/cv_bridge.hpp>
+#include <filesystem>
+#include <geometry_msgs/msg/vector3.hpp>
+#include <geometry_msgs/msg/point.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/quaternion.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <ikd-Tree/ikd_Tree.h>
 #include <math.h>
 #include <mutex>
-#include <nav_msgs/Odometry.h>
-#include <nav_msgs/Path.h>
+#include <nav_msgs/msg/odometry.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <omp.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
-#include <ros/package.h>
-#include <ros/ros.h>
-#include <tf/transform_datatypes.h>
-#include <tf/transform_broadcaster.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <std_msgs/msg/header.hpp>
+#include <tf2_ros/transform_broadcaster.hpp>
 #include <thread>
-#include <visualization_msgs/Marker.h>
+#include <visualization_msgs/msg/marker.hpp>
 
 #include "feature_manager.h"
 #include "image_processing.h"
@@ -95,7 +102,10 @@ vector<double> extrinT(3, 0.0);
 vector<double> extrinR(9, 0.0);
 deque<double> time_buffer;
 deque<PointCloudXYZI::Ptr> lidar_buffer;
-deque<sensor_msgs::Imu::ConstPtr> imu_buffer;
+deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu_buffer;
+
+rclcpp::Node::SharedPtr node;
+std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
 
 PointCloudXYZI::Ptr featsFromMap(new PointCloudXYZI());
 PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());
@@ -124,10 +134,10 @@ state_ikfom state_point;
 
 vect3 pos_lid;
 
-nav_msgs::Path path;
-nav_msgs::Odometry odomAftMapped;
-geometry_msgs::Quaternion geoQuat;
-geometry_msgs::PoseStamped msg_body_pose;
+nav_msgs::msg::Path path;
+nav_msgs::msg::Odometry odomAftMapped;
+geometry_msgs::msg::Quaternion geoQuat;
+geometry_msgs::msg::PoseStamped msg_body_pose;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
@@ -240,11 +250,11 @@ void lasermap_fov_segment()
     if(cub_needrm.size() > 0) kdtree_delete_counter = ikdtree.Delete_Point_Boxes(cub_needrm);
 }
 
-void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
+void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
 {
-    if (msg->header.stamp.toSec() < last_timestamp_lidar)
+    if (rclcpp::Time(msg->header.stamp).seconds() < last_timestamp_lidar)
     {
-        ROS_ERROR("lidar loop back, clear buffer");
+        RCLCPP_ERROR(rclcpp::get_logger("coin_lio"), "lidar loop back, clear buffer");
         lidar_buffer.clear();
         time_buffer.clear();
     }
@@ -252,30 +262,30 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr);
     const std::lock_guard<std::mutex> lock(mtx_buffer);
-    
+
     lidar_buffer.push_back(ptr);
-    time_buffer.push_back(msg->header.stamp.toSec());
-    last_timestamp_lidar = msg->header.stamp.toSec();
+    time_buffer.push_back(rclcpp::Time(msg->header.stamp).seconds());
+    last_timestamp_lidar = rclcpp::Time(msg->header.stamp).seconds();
 }
 
 double timediff_lidar_wrt_imu = 0.0;
 
-void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
+void imu_cbk(const sensor_msgs::msg::Imu::ConstSharedPtr msg_in)
 {
-    sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
+    sensor_msgs::msg::Imu::SharedPtr msg(new sensor_msgs::msg::Imu(*msg_in));
     if (abs(timediff_lidar_wrt_imu) > 0.1 && time_sync_en)
     {
         msg->header.stamp = \
-        ros::Time().fromSec(timediff_lidar_wrt_imu + msg_in->header.stamp.toSec());
+        rclcpp::Time(static_cast<int64_t>((timediff_lidar_wrt_imu + rclcpp::Time(msg_in->header.stamp).seconds()) * 1e9));
     }
 
-    double timestamp = msg->header.stamp.toSec();
+    double timestamp = rclcpp::Time(msg->header.stamp).seconds();
 
     {
         const std::lock_guard<std::mutex> lock(mtx_buffer);
         if (timestamp < last_timestamp_imu)
         {
-            ROS_WARN("imu loop back, clear buffer");
+            RCLCPP_WARN(rclcpp::get_logger("coin_lio"), "imu loop back, clear buffer");
             imu_buffer.clear();
         }
         last_timestamp_imu = timestamp;
@@ -300,22 +310,22 @@ bool sync_packages(MeasureGroup &meas)
         lidar_end_time = meas.lidar_end_time;
         if (meas.lidar->points.size() <= 1) // time too little
         {
-            ROS_WARN("Too few input point cloud!\n");
+            RCLCPP_WARN(rclcpp::get_logger("coin_lio"), "Too few input point cloud!\n");
         }
 
         lidar_pushed = true;
     }
-    if (imu_buffer.back()->header.stamp.toSec() < lidar_end_time)
+    if (rclcpp::Time(imu_buffer.back()->header.stamp).seconds() < lidar_end_time)
     {
         return false;
     }
 
     /*** push imu data, and pop from imu buffer ***/
-    double imu_time = imu_buffer.front()->header.stamp.toSec();
+    double imu_time = rclcpp::Time(imu_buffer.front()->header.stamp).seconds();
     meas.imu.clear();
     while ((!imu_buffer.empty()) && (imu_time < lidar_end_time))
     {
-        imu_time = imu_buffer.front()->header.stamp.toSec();
+        imu_time = rclcpp::Time(imu_buffer.front()->header.stamp).seconds();
         if(imu_time > lidar_end_time) break;
         meas.imu.push_back(imu_buffer.front());
         imu_buffer.pop_front();
@@ -405,7 +415,7 @@ void map_incremental()
 }
 
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
-void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
+void publish_frame_world(const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull)
 {
     if(scan_pub_en)
     {
@@ -419,11 +429,11 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
             RGBpointBodyToWorld(&laserCloudFullRes->points[i], \
                                 &laserCloudWorld->points[i]);
         }
-        sensor_msgs::PointCloud2 laserCloudmsg;
+        sensor_msgs::msg::PointCloud2 laserCloudmsg;
         pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
-        laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
+        laserCloudmsg.header.stamp = rclcpp::Time(static_cast<int64_t>(lidar_end_time * 1e9));
         laserCloudmsg.header.frame_id = "camera_init";
-        pubLaserCloudFull.publish(laserCloudmsg);
+        pubLaserCloudFull->publish(laserCloudmsg);
     }
 
     /**************** save map ****************/
@@ -448,11 +458,11 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
         {
             pcd_index ++;
             string pcd_dir = string(ROOT_DIR) + "PCD/";
-            bool directory_exists = boost::filesystem::exists(pcd_dir) && 
-                boost::filesystem::is_directory(pcd_dir);
+            bool directory_exists = std::filesystem::exists(pcd_dir) &&
+                std::filesystem::is_directory(pcd_dir);
             if (!directory_exists)
             {
-                boost::filesystem::create_directory(pcd_dir);
+                std::filesystem::create_directory(pcd_dir);
             }
             string all_points_dir(pcd_dir + to_string(pcd_index) + string(".pcd"));
             pcl::PCDWriter pcd_writer;
@@ -464,7 +474,7 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
     }
 }
 
-void publish_frame_body(const ros::Publisher & pubLaserCloudFull_body)
+void publish_frame_body(const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body)
 {
     int size = feats_undistort->points.size();
     PointCloudXYZI::Ptr laserCloudIMUBody(new PointCloudXYZI(size, 1));
@@ -474,11 +484,11 @@ void publish_frame_body(const ros::Publisher & pubLaserCloudFull_body)
                             &laserCloudIMUBody->points[i]);
     }
 
-    sensor_msgs::PointCloud2 laserCloudmsg;
+    sensor_msgs::msg::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
-    laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
+    laserCloudmsg.header.stamp = rclcpp::Time(static_cast<int64_t>(lidar_end_time * 1e9));
     laserCloudmsg.header.frame_id = "body";
-    pubLaserCloudFull_body.publish(laserCloudmsg);
+    pubLaserCloudFull_body->publish(laserCloudmsg);
 }
 
 template<typename T>
@@ -494,13 +504,13 @@ void set_posestamp(T & out)
 
 }
 
-void publish_odometry(const ros::Publisher & pubOdomAftMapped)
+void publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubOdomAftMapped)
 {
     odomAftMapped.header.frame_id = "camera_init";
     odomAftMapped.child_frame_id = "body";
-    odomAftMapped.header.stamp = ros::Time().fromSec(lidar_end_time);// ros::Time().fromSec(lidar_end_time);
+    odomAftMapped.header.stamp = rclcpp::Time(static_cast<int64_t>(lidar_end_time * 1e9));
     set_posestamp(odomAftMapped.pose);
-    pubOdomAftMapped.publish(odomAftMapped);
+    pubOdomAftMapped->publish(odomAftMapped);
     auto P = kf.get_P();
     for (int i = 0; i < 6; i ++)
     {
@@ -513,24 +523,24 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
         odomAftMapped.pose.covariance[i*6 + 5] = P(k, 2);
     }
 
-    static tf::TransformBroadcaster br;
-    tf::Transform                   transform;
-    tf::Quaternion                  q;
-    transform.setOrigin(tf::Vector3(odomAftMapped.pose.pose.position.x, \
-                                    odomAftMapped.pose.pose.position.y, \
-                                    odomAftMapped.pose.pose.position.z));
-    q.setW(odomAftMapped.pose.pose.orientation.w);
-    q.setX(odomAftMapped.pose.pose.orientation.x);
-    q.setY(odomAftMapped.pose.pose.orientation.y);
-    q.setZ(odomAftMapped.pose.pose.orientation.z);
-    transform.setRotation( q );
-    br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", "body" ) );
+    geometry_msgs::msg::TransformStamped ts;
+    ts.header.stamp = odomAftMapped.header.stamp;
+    ts.header.frame_id = "camera_init";
+    ts.child_frame_id = "body";
+    ts.transform.translation.x = odomAftMapped.pose.pose.position.x;
+    ts.transform.translation.y = odomAftMapped.pose.pose.position.y;
+    ts.transform.translation.z = odomAftMapped.pose.pose.position.z;
+    ts.transform.rotation.w = odomAftMapped.pose.pose.orientation.w;
+    ts.transform.rotation.x = odomAftMapped.pose.pose.orientation.x;
+    ts.transform.rotation.y = odomAftMapped.pose.pose.orientation.y;
+    ts.transform.rotation.z = odomAftMapped.pose.pose.orientation.z;
+    tf_broadcaster->sendTransform(ts);
 }
 
-void publish_path(const ros::Publisher pubPath)
+void publish_path(const rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath)
 {
     set_posestamp(msg_body_pose);
-    msg_body_pose.header.stamp = ros::Time().fromSec(lidar_end_time);
+    msg_body_pose.header.stamp = rclcpp::Time(static_cast<int64_t>(lidar_end_time * 1e9));
     msg_body_pose.header.frame_id = "camera_init";
 
     /*** if path is too large, the rvis will crash ***/
@@ -539,7 +549,7 @@ void publish_path(const ros::Publisher pubPath)
     if (jjj % 10 == 0)
     {
         path.poses.push_back(msg_body_pose);
-        pubPath.publish(path);
+        pubPath->publish(path);
     }
 }
 
@@ -618,7 +628,7 @@ void h_share_model_geometric(state_ikfom &s, esekfom::dyn_share_datastruct<doubl
         ekfom_data.valid = false;
         ekfom_data.h_x.resize(0,0);
         ekfom_data.h.resize(0);
-        ROS_WARN("No Effective Points! \n");
+        RCLCPP_WARN(rclcpp::get_logger("coin_lio"), "No Effective Points! \n");
         return;
     }
 
@@ -665,7 +675,7 @@ void h_share_model_photometric(state_ikfom &s, esekfom::dyn_share_datastruct<dou
 {
     if (feature_manager->features().empty()) {
         ekfom_data.valid = false;
-        ROS_WARN("No Effective Photometric Points! \n");
+        RCLCPP_WARN(rclcpp::get_logger("coin_lio"), "No Effective Photometric Points! \n");
         return;
     }
 
@@ -909,13 +919,16 @@ void log_fancy(double current_time_s, double length, int n_uninformative, int n_
 
 int main(int argc, char** argv)
 {
-    ros::init(argc, argv, "laserMapping");
-    ros::NodeHandle nh;
+    rclcpp::init(argc, argv);
+    rclcpp::NodeOptions opts;
+    opts.allow_undeclared_parameters(true);
+    opts.automatically_declare_parameters_from_overrides(true);
+    node = std::make_shared<rclcpp::Node>("laserMapping", opts);
 
     // Avoid PCL Warnings
     pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
 
-    std::string animation_path = ros::package::getPath("coin_lio");
+    std::string animation_path = ament_index_cpp::get_package_share_directory("coin_lio");
     animation_path.append("/config/coin_ascii.txt");
     std::ifstream t(animation_path);
     std::stringstream buffer;
@@ -942,62 +955,71 @@ int main(int argc, char** argv)
     int point_filter_num;
     int n_uninformative;
 
+    int64_t max_iteration_i, n_uninformative_i, point_filter_num_i, pcd_save_interval_i, lidar_type_i;
+
     // Common Params
-    nh.param<string>("common/lid_topic",lid_topic,"/ouster/points");
-    nh.param<string>("common/imu_topic", imu_topic,"/ouster/imu");
-    nh.param<bool>("common/time_sync_en", time_sync_en, false);
+    node->get_parameter_or("common.lid_topic",lid_topic,std::string("/ouster/points"));
+    node->get_parameter_or("common.imu_topic", imu_topic,std::string("/ouster/imu"));
+    node->get_parameter_or("common.time_sync_en", time_sync_en, false);
 
     // Filter Params
-    nh.param<int>("filter/max_iteration", NUM_MAX_ITERATIONS, 5);
-    nh.param<int>("filter/n_uninformative", n_uninformative, 25);
-    nh.param<double>("filter/eps", eps, 0.001);
-    nh.param<double>("filter/geo_std", geo_std, 0.001);
-    nh.param<double>("filter/photo_scale", photo_scale, 0.002);
+    node->get_parameter_or("filter.max_iteration", max_iteration_i, int64_t(5));
+    node->get_parameter_or("filter.n_uninformative", n_uninformative_i, int64_t(25));
+    node->get_parameter_or("filter.eps", eps, 0.001);
+    node->get_parameter_or("filter.geo_std", geo_std, 0.001);
+    node->get_parameter_or("filter.photo_scale", photo_scale, 0.002);
+    NUM_MAX_ITERATIONS = static_cast<int>(max_iteration_i);
+    n_uninformative = static_cast<int>(n_uninformative_i);
 
     // Mapping Params
-    nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en, true);
-    nh.param<int>("mapping/point_filter_num", point_filter_num, 4);
-    nh.param<double>("mapping/det_range",DET_RANGE, 300.f);
-    nh.param<double>("mapping/cube_side_length",cube_len, 200);
-    nh.param<double>("mapping/filter_size_map",filter_size_map_min,0.5);
-    nh.param<double>("mapping/filter_size_surf",filter_size_surf_min,0.5);
-    nh.param<double>("mapping/fov_degree",fov_deg, 180);
-    nh.param<double>("mapping/gyr_cov", gyr_cov, 0.1);
-    nh.param<double>("mapping/acc_cov", acc_cov, 0.1);
-    nh.param<double>("mapping/b_gyr_cov", b_gyr_cov, 0.0001);
-    nh.param<double>("mapping/b_acc_cov", b_acc_cov, 0.0001);
-    nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
-    nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
+    node->get_parameter_or("mapping.extrinsic_est_en", extrinsic_est_en, true);
+    node->get_parameter_or("mapping.point_filter_num", point_filter_num_i, int64_t(4));
+    node->get_parameter_or("mapping.det_range",DET_RANGE, 300.f);
+    node->get_parameter_or("mapping.cube_side_length",cube_len, 200.0);
+    node->get_parameter_or("mapping.filter_size_map",filter_size_map_min,0.5);
+    node->get_parameter_or("mapping.filter_size_surf",filter_size_surf_min,0.5);
+    node->get_parameter_or("mapping.fov_degree",fov_deg, 180.0);
+    node->get_parameter_or("mapping.gyr_cov", gyr_cov, 0.1);
+    node->get_parameter_or("mapping.acc_cov", acc_cov, 0.1);
+    node->get_parameter_or("mapping.b_gyr_cov", b_gyr_cov, 0.0001);
+    node->get_parameter_or("mapping.b_acc_cov", b_acc_cov, 0.0001);
+    node->get_parameter_or("mapping.extrinsic_T", extrinT, vector<double>());
+    node->get_parameter_or("mapping.extrinsic_R", extrinR, vector<double>());
+    point_filter_num = static_cast<int>(point_filter_num_i);
 
     // PCD Save Params
-    nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false);
-    nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
+    node->get_parameter_or("pcd_save.pcd_save_en", pcd_save_en, false);
+    node->get_parameter_or("pcd_save.interval", pcd_save_interval_i, int64_t(-1));
+    pcd_save_interval = static_cast<int>(pcd_save_interval_i);
 
     // Preprocess Params
-    nh.param<int>("preprocess/lidar_type", p_pre->lidar_type, OUSTER);
-    nh.param<double>("preprocess/blind", p_pre->blind, 0.01);
+    node->get_parameter_or("preprocess.lidar_type", lidar_type_i, int64_t(OUSTER));
+    node->get_parameter_or("preprocess.blind", p_pre->blind, 0.01);
+    p_pre->lidar_type = static_cast<int>(lidar_type_i);
     std::vector<double> lidar_to_sensor;
-    bool transform_found = nh.getParam("/lidar_to_sensor_transform", lidar_to_sensor) ||
-        nh.getParam("/lidar_intrinsics/lidar_to_sensor_transform", lidar_to_sensor);
+    bool transform_found = node->get_parameter("lidar_to_sensor_transform", lidar_to_sensor) ||
+        node->get_parameter("lidar_intrinsics.lidar_to_sensor_transform", lidar_to_sensor);
     if (!transform_found || lidar_to_sensor.size() != 16) {
-        ROS_WARN("No lidar to sensor transform found, setting to default value.");
+        RCLCPP_WARN(rclcpp::get_logger("coin_lio"), "No lidar to sensor transform found, setting to default value.");
         p_pre->lidar_sensor_z_offset = 0.03618;
     } else {
         p_pre->lidar_sensor_z_offset = lidar_to_sensor[11] * 0.001;
     }
 
     // Publishing Params
-    nh.param<bool>("publish/path_en", path_en, true);
-    nh.param<bool>("publish/scan_publish_en", scan_pub_en, true);
-    nh.param<bool>("publish/scan_bodyframe_pub_en", scan_body_pub_en, true);
-    nh.param<bool>("publish/dashboard", dashboard, true);
-    nh.param<bool>("publish/debug", debug, false);
+    node->get_parameter_or("publish.path_en", path_en, true);
+    node->get_parameter_or("publish.scan_publish_en", scan_pub_en, true);
+    node->get_parameter_or("publish.scan_bodyframe_pub_en", scan_body_pub_en, true);
+    node->get_parameter_or("publish.dashboard", dashboard, true);
+    node->get_parameter_or("publish.debug", debug, false);
 
-    projector = std::make_shared<Projector>(nh);
-    feature_manager = std::make_shared<FeatureManager>(nh, projector);
-    image_processor = std::make_shared<ImageProcessor>(nh, projector, feature_manager);
-    path.header.stamp    = ros::Time::now();
+    projector = std::make_shared<Projector>(node);
+    feature_manager = std::make_shared<FeatureManager>(node, projector);
+    image_processor = std::make_shared<ImageProcessor>(node, projector, feature_manager);
+    path.header.stamp    = node->now();
     path.header.frame_id ="camera_init";
+
+    tf_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>(node);
 
     /*** variables definition ***/
     FOV_DEG = (fov_deg + 10.0) > 179.9 ? 179.9 : (fov_deg + 10.0);
@@ -1027,32 +1049,45 @@ int main(int argc, char** argv)
     cv::Mat colorized_feature_img;
 
     /*** ROS subscribe initialization ***/
-    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/Odometry", 100000);
-    ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
-    ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_body", 100000);
-    ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>("/cloud_effected", 100000);
-    ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("/Laser_map", 100000);
-    ros::Publisher pubPath          = nh.advertise<nav_msgs::Path>("/path", 100000);
-    
-    ros::Publisher intensity_publisher = nh.advertise<sensor_msgs::Image>("/filtered_image", 2000);
-    ros::Publisher feature_publisher = nh.advertise<sensor_msgs::Image>("/feature_image", 2000);
-    ros::Publisher previous_feature_publisher;
-    ros::Publisher predicted_feature_publisher;
-    ros::Publisher feature_marker_publisher;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubOdomAftMapped =
+        node->create_publisher<nav_msgs::msg::Odometry>("/Odometry", rclcpp::QoS(rclcpp::KeepLast(20)));
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull =
+        node->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered", rclcpp::QoS(rclcpp::KeepLast(20)));
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body =
+        node->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered_body", rclcpp::QoS(rclcpp::KeepLast(20)));
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudEffect =
+        node->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_effected", rclcpp::QoS(rclcpp::KeepLast(20)));
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudMap =
+        node->create_publisher<sensor_msgs::msg::PointCloud2>("/Laser_map", rclcpp::QoS(rclcpp::KeepLast(20)));
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath =
+        node->create_publisher<nav_msgs::msg::Path>("/path", rclcpp::QoS(rclcpp::KeepLast(20)));
+
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr intensity_publisher =
+        node->create_publisher<sensor_msgs::msg::Image>("/filtered_image", rclcpp::QoS(rclcpp::KeepLast(20)));
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr feature_publisher =
+        node->create_publisher<sensor_msgs::msg::Image>("/feature_image", rclcpp::QoS(rclcpp::KeepLast(20)));
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr previous_feature_publisher;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr predicted_feature_publisher;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr feature_marker_publisher;
     if (debug) {
-        previous_feature_publisher = nh.advertise<sensor_msgs::Image>("/previous_feature_image", 2000);
-        predicted_feature_publisher = nh.advertise<sensor_msgs::Image>("/predicted_feature_image", 2000);
-        feature_marker_publisher = nh.advertise<visualization_msgs::Marker>("/feature_markers", 2000);
-    } 
-    
-    ros::Subscriber sub_pcl = nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
-    ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk);
+        previous_feature_publisher =
+            node->create_publisher<sensor_msgs::msg::Image>("/previous_feature_image", rclcpp::QoS(rclcpp::KeepLast(20)));
+        predicted_feature_publisher =
+            node->create_publisher<sensor_msgs::msg::Image>("/predicted_feature_image", rclcpp::QoS(rclcpp::KeepLast(20)));
+        feature_marker_publisher =
+            node->create_publisher<visualization_msgs::msg::Marker>("/feature_markers", rclcpp::QoS(rclcpp::KeepLast(20)));
+    }
+
+    // ponytail: QoS normalized — giant ROS1 queue sizes don't translate; SensorDataQoS for Ouster/bag compat
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_pcl =
+        node->create_subscription<sensor_msgs::msg::PointCloud2>(lid_topic, rclcpp::SensorDataQoS().keep_last(2000), standard_pcl_cbk);
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu =
+        node->create_subscription<sensor_msgs::msg::Imu>(imu_topic, rclcpp::SensorDataQoS().keep_last(2000), imu_cbk);
 
 //------------------------------------------------------------------------------------------------------
-    ros::AsyncSpinner spinner(0);
-    spinner.start();
+    std::thread spin_thread([&](){ rclcpp::spin(node); });
 
-    bool status = ros::ok();
+    bool status = rclcpp::ok();
     while (status)
     {
         if (flg_exit) break;
@@ -1083,15 +1118,15 @@ int main(int argc, char** argv)
             if (feats_undistort->empty() || (feats_undistort == NULL) || vec_T_Li_Lk.empty())
             {
                 timing::Timing::Reset();
-                ROS_WARN("No point, skip this scan!\n");
+                RCLCPP_WARN(rclcpp::get_logger("coin_lio"), "No point, skip this scan!\n");
                 continue;
             }
             state_point = kf.get_x();
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
 
             // Update current frame
-            std_msgs::Header header;
-            header.stamp.fromSec(Measures.lidar_end_time);
+            std_msgs::msg::Header header;
+            header.stamp = rclcpp::Time(static_cast<int64_t>(Measures.lidar_end_time * 1e9));
             header.frame_id = "lidar";
             current_frame.points_corrected = feats_undistort;
             current_frame.T_Li_Lk_vec = vec_T_Li_Lk;
@@ -1100,9 +1135,9 @@ int main(int argc, char** argv)
 
             // Create intensity image and apply filters
             image_processor->createImages(current_frame);
-            sensor_msgs::ImagePtr img_msg =
+            sensor_msgs::msg::Image::SharedPtr img_msg =
                 cv_bridge::CvImage(header, "mono8", current_frame.img_photo_u8).toImageMsg();
-            intensity_publisher.publish(img_msg);
+            intensity_publisher->publish(*img_msg);
             
             if (debug && (!colorized_feature_img.empty())) {
                 // Visualized feature position predicted by IMU integration
@@ -1135,13 +1170,13 @@ int main(int argc, char** argv)
                     cv::circle(predicted_feature_img, cv::Point2f(uv_i(0), uv_i(1)), 5, cv::Scalar(0, 185, 255.0), 2);
                 }
 
-                sensor_msgs::ImagePtr feat_pred_msg =
+                sensor_msgs::msg::Image::SharedPtr feat_pred_msg =
                     cv_bridge::CvImage(current_frame.header, "bgr8", predicted_feature_img).toImageMsg();
-                predicted_feature_publisher.publish(feat_pred_msg);
+                predicted_feature_publisher->publish(*feat_pred_msg);
 
-                sensor_msgs::ImagePtr feat_prev_msg =
+                sensor_msgs::msg::Image::SharedPtr feat_prev_msg =
                     cv_bridge::CvImage(current_frame.header, "bgr8", colorized_feature_img).toImageMsg();
-                previous_feature_publisher.publish(feat_prev_msg);
+                previous_feature_publisher->publish(*feat_prev_msg);
             }
 
 
@@ -1181,7 +1216,7 @@ int main(int argc, char** argv)
 
             if (feats_down_size < 5)
             {
-                ROS_WARN("No point, skip this scan!\n");
+                RCLCPP_WARN(rclcpp::get_logger("coin_lio"), "No point, skip this scan!\n");
                 continue;
             }
 
@@ -1239,14 +1274,14 @@ int main(int argc, char** argv)
                 const V2D& uv = feature_manager->features()[j].center;
                 cv::circle(colorized_feature_img, cv::Point2f(uv(0), uv(1)), 5, cv::Scalar(71, 215, 253), 2);
             }
-            sensor_msgs::ImagePtr feat_img_msg =
+            sensor_msgs::msg::Image::SharedPtr feat_img_msg =
                 cv_bridge::CvImage(current_frame.header, "bgr8", colorized_feature_img).toImageMsg();
-            feature_publisher.publish(feat_img_msg);
+            feature_publisher->publish(*feat_img_msg);
 
             if (debug) {
-                visualization_msgs::Marker marker;
+                visualization_msgs::msg::Marker marker;
                 int patch_size = feature_manager->patchSize();
-                int center_idx = int(patch_size * patch_size) / 2; 
+                int center_idx = int(patch_size * patch_size) / 2;
                 marker.header.frame_id = "camera_init";
                 marker.header.stamp = current_frame.header.stamp;
                 marker.ns = "feature";
@@ -1254,29 +1289,29 @@ int main(int argc, char** argv)
                 marker.pose.orientation.y = 0;
                 marker.pose.orientation.z = 0;
                 marker.pose.orientation.w = 1;
-                marker.type = visualization_msgs::Marker::LINE_LIST;
-                marker.action = visualization_msgs::Marker::ADD;
+                marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+                marker.action = visualization_msgs::msg::Marker::ADD;
                 marker.scale.x = 0.01;
                 marker.scale.x = 0.01;
                 marker.color.a = 0.25;
                 marker.color.r = 253./255.;
                 marker.color.g = 215./255.;
                 marker.color.b = 71./255.;
-                geometry_msgs::Point p_imu;
+                geometry_msgs::msg::Point p_imu;
                 p_imu.x = state_point.pos(0);
                 p_imu.y = state_point.pos(1);
                 p_imu.z = state_point.pos(2);
 
                 for (int j = 0; j < feature_manager->features().size(); j++) {
                     const V3D& p_G = feature_manager->features()[j].p[center_idx];
-                    geometry_msgs::Point p_feat;
+                    geometry_msgs::msg::Point p_feat;
                     p_feat.x = p_G(0);
                     p_feat.y = p_G(1);
                     p_feat.z = p_G(2);
                     marker.points.push_back(p_imu);
                     marker.points.push_back(p_feat);
                 }
-                feature_marker_publisher.publish(marker);
+                feature_marker_publisher->publish(marker);
             }
 
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
@@ -1311,8 +1346,11 @@ int main(int argc, char** argv)
         else {
             sleep(0.0005);
         }
-        status = ros::ok();
+        status = rclcpp::ok();
     }
+
+    rclcpp::shutdown();
+    spin_thread.join();
 
     /**************** save map ****************/
     /* 1. make sure you have enough memories
@@ -1321,11 +1359,11 @@ int main(int argc, char** argv)
     {
         string file_name = string("scans.pcd");
         string pcd_dir = string(ROOT_DIR) + "PCD/";
-        bool directory_exists = boost::filesystem::exists(pcd_dir) && 
-            boost::filesystem::is_directory(pcd_dir);
+        bool directory_exists = std::filesystem::exists(pcd_dir) &&
+            std::filesystem::is_directory(pcd_dir);
         if (!directory_exists)
         {
-            boost::filesystem::create_directory(pcd_dir);
+            std::filesystem::create_directory(pcd_dir);
         }
         string all_points_dir(pcd_dir + file_name);
         pcl::PCDWriter pcd_writer;

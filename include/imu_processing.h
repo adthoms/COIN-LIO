@@ -3,7 +3,7 @@
 #include <omp.h>
 #include <common_lib.h>
 #include <IKFoM_toolkit/esekfom/esekfom.hpp>
-#include <sensor_msgs/Imu.h>
+#include <sensor_msgs/msg/imu.hpp>
 #include <unordered_map>
 
 #include "use_ikfom.h"
@@ -22,7 +22,7 @@ class ImuProcess
   ~ImuProcess() {}
 
   void Reset();
-  void Reset(double start_timestamp, const sensor_msgs::ImuConstPtr &lastimu);
+  void Reset(double start_timestamp, const sensor_msgs::msg::Imu::ConstSharedPtr &lastimu);
   void set_extrinsic(const V3D &transl, const M3D &rot);
   void set_extrinsic(const V3D &transl);
   void set_extrinsic(const MD(4,4) &T);
@@ -48,7 +48,7 @@ class ImuProcess
     PointCloudXYZI &pcl_in_out, std::vector<M4D>& vec_T_Li_Lk, std::vector<int>& vec_idx);
 
   PointCloudXYZI::Ptr cur_pcl_un_;
-  sensor_msgs::ImuConstPtr last_imu_;
+  sensor_msgs::msg::Imu::ConstSharedPtr last_imu_;
   vector<Pose6D> IMUpose;
   vector<M3D>    v_rot_pcl_;
   M3D Lidar_R_wrt_IMU;

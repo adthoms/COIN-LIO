@@ -10,10 +10,9 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
 #include <opencv2/calib3d.hpp>
-#include <ros/ros.h>
-#include <sensor_msgs/Image.h>
-#include <cv_bridge/cv_bridge.h>
-#include <visualization_msgs/MarkerArray.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/image.hpp>
+#include <cv_bridge/cv_bridge.hpp>
 #include "projector.h"
 
 
@@ -30,7 +29,7 @@ struct Feature {
 
 class FeatureManager {
  public:
-    FeatureManager(ros::NodeHandle& nh, std::shared_ptr<Projector> projector);
+    FeatureManager(rclcpp::Node::SharedPtr node, std::shared_ptr<Projector> projector);
     
     void updateFeatures(const LidarFrame& frame, const std::vector<V3D>& V, const M4D& T_GL);
 
@@ -49,7 +48,7 @@ class FeatureManager {
     const int nAdded() const { return n_added_last_; }
 
  private:
-    void loadParameters(ros::NodeHandle& n);
+    void loadParameters(rclcpp::Node::SharedPtr node);
     
     void detectFeatures(const LidarFrame& frame, const std::vector<V3D>& V, const M4D& T_GL);
     
@@ -70,7 +69,7 @@ class FeatureManager {
 
     std::vector<string> feature_modes = {"comp", "strongest", "random"};
     std::shared_ptr<Projector> projector_;
-    ros::Publisher moment_pub;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr moment_pub;
     std::vector<Feature> features_;
     Eigen::MatrixXi patch_idx_;
     cv::Mat img_prev_;

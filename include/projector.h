@@ -5,11 +5,11 @@
 #define COIN_LIO_PROJECTOR_H_
 
 #include <common_lib.h>
-#include "ros/ros.h"
+#include <rclcpp/rclcpp.hpp>
 
 class Projector {
   public:
-    Projector(ros::NodeHandle nh);
+    Projector(rclcpp::Node::SharedPtr node);
 
     void createImages(LidarFrame& frame) const;
     void projectionJacobian(const V3D& p, Eigen::MatrixXd& du_dp) const;
@@ -23,7 +23,7 @@ class Projector {
 
 
   private:
-    void loadParameters(ros::NodeHandle nh);
+    void loadParameters(rclcpp::Node::SharedPtr node);
     size_t vectorIndexFromRowCol(const size_t row, const size_t col) const;
     double beam_offset_m_;
     int u_shift_;

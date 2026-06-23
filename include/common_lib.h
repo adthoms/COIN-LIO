@@ -1,16 +1,15 @@
 #ifndef COIN_LIO_COMMON_LIB_H_
 #define COIN_LIO_COMMON_LIB_H_
-#include <coin_lio/Pose6D.h>
+#include <coin_lio/msg/pose6_d.hpp>
 #include <deque>
 #include <Eigen/Eigen>
-#include <eigen_conversions/eigen_msg.h>
 #include <opencv2/core/core.hpp>
 #include <opencv2/core/eigen.hpp>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
 #include <so3_math.h>
-#include <sensor_msgs/Imu.h>
-#include <std_msgs/Header.h>
+#include <sensor_msgs/msg/imu.hpp>
+#include <std_msgs/msg/header.hpp>
 
 using namespace std;
 using namespace Eigen;
@@ -34,7 +33,7 @@ using namespace Eigen;
 #define STD_VEC_FROM_EIGEN(mat)  vector<decltype(mat)::Scalar> (mat.data(), mat.data() + mat.rows() * mat.cols())
 #define DEBUG_FILE_DIR(name)     (string(string(ROOT_DIR) + "Log/"+ name))
 
-typedef coin_lio::Pose6D Pose6D;
+typedef coin_lio::msg::Pose6D Pose6D;
 typedef pcl::PointXYZINormal PointType;
 typedef pcl::PointCloud<PointType> PointCloudXYZI;
 typedef vector<PointType, Eigen::aligned_allocator<PointType>>  PointVector;
@@ -67,7 +66,7 @@ struct MeasureGroup     // Lidar data and imu dates for the curent process
     double lidar_beg_time;
     double lidar_end_time;
     PointCloudXYZI::Ptr lidar;
-    deque<sensor_msgs::Imu::ConstPtr> imu;
+    deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu;
 };
 
 struct StatesGroup
@@ -159,7 +158,7 @@ struct StatesGroup
 };
 
 struct LidarFrame {
-    std_msgs::Header header;
+    std_msgs::msg::Header header;
     cv::Mat img_intensity;
     cv::Mat img_photo_u8;
     cv::Mat img_range;

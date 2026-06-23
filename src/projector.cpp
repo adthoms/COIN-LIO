@@ -6,11 +6,11 @@
 
 #define DUPLICATE_POINTS 10
 
-Projector::Projector(ros::NodeHandle nh) {
+Projector::Projector(rclcpp::Node::SharedPtr node) {
     try {
-        loadParameters(nh);
+        loadParameters(node);
     } catch (const std::runtime_error& e) {
-        ROS_ERROR_STREAM(e.what());
+        RCLCPP_ERROR_STREAM(rclcpp::get_logger("coin_lio"), e.what());
         exit(1);
     }
 
@@ -49,51 +49,53 @@ Projector::Projector(ros::NodeHandle nh) {
     }
 };
 
-void Projector::loadParameters(ros::NodeHandle nh) {
-    float rows;
-    if (!(nh.getParam("/data_format/pixels_per_column", rows) || 
-          nh.getParam("/lidar_data_format/pixels_per_column", rows))) {
+void Projector::loadParameters(rclcpp::Node::SharedPtr node) {
+    int64_t rows;
+    if (!(node->get_parameter("data_format.pixels_per_column", rows) ||
+          node->get_parameter("lidar_data_format.pixels_per_column", rows))) {
         throw std::runtime_error("Missing rows parameter");
         return;
     }
     rows_ = static_cast<size_t>(rows);
 
-    float cols;
-    if (!(nh.getParam("/data_format/columns_per_frame", cols) ||
-          nh.getParam("/lidar_data_format/columns_per_frame", cols))) {
+    int64_t cols;
+    if (!(node->get_parameter("data_format.columns_per_frame", cols) ||
+          node->get_parameter("lidar_data_format.columns_per_frame", cols))) {
         throw std::runtime_error("Missing cols parameter");
         return;
     }
     cols_ = static_cast<size_t>(cols);
 
-    if (!(nh.getParam("/lidar_origin_to_beam_origin_mm", beam_offset_m_) || 
-          nh.getParam("/beam_intrinsics/lidar_origin_to_beam_origin_mm", beam_offset_m_))) {
+    if (!(node->get_parameter("lidar_origin_to_beam_origin_mm", beam_offset_m_) ||
+          node->get_parameter("beam_intrinsics.lidar_origin_to_beam_origin_mm", beam_offset_m_))) {
         throw std::runtime_error("Missing beam_offset_m parameter");
         return;
     }
 
-    if (!(nh.getParam("/data_format/pixel_shift_by_row", offset_lut_) || 
-          nh.getParam("/lidar_data_format/pixel_shift_by_row", offset_lut_))) {
+    std::vector<int64_t> offset_lut;
+    if (!(node->get_parameter("data_format.pixel_shift_by_row", offset_lut) ||
+          node->get_parameter("lidar_data_format.pixel_shift_by_row", offset_lut))) {
         throw std::runtime_error("Missing offset parameter");
         return;
     }
+    offset_lut_.assign(offset_lut.begin(), offset_lut.end());
 
-    if (!(nh.getParam("/beam_altitude_angles", elevation_angles_) || 
-          nh.getParam("/beam_intrinsics/beam_altitude_angles", elevation_angles_))) {
+    if (!(node->get_parameter("beam_altitude_angles", elevation_angles_) ||
+          node->get_parameter("beam_intrinsics.beam_altitude_angles", elevation_angles_))) {
         throw std::runtime_error("Missing alt parameter");
         return;
     }
 
-    float u_shift;
-    if (!nh.getParam("image/u_shift", u_shift)) {
+    int64_t u_shift;
+    if (!node->get_parameter("image.u_shift", u_shift)) {
         throw std::runtime_error("Missing column shift parameter");
         return;
     }
     u_shift_ = static_cast<int>(u_shift);
-    
-    // true: destagger the pointcloud data 
+
+    // true: destagger the pointcloud data
     // https://static.ouster.dev/sdk-docs/reference/lidar-scan.html#staggering-and-destaggering
-    nh.param<bool>("image/destagger", destagger_, true);
+    node->get_parameter_or("image.destagger", destagger_, true);
 }
 
 size_t Projector::vectorIndexFromRowCol(const size_t row, const size_t col) const {

@@ -1,4 +1,4 @@
-FROM osrf/ros:noetic-desktop-full
+FROM osrf/ros:kilted-desktop-full
 
 # Copy scripts folder
 COPY scripts/ /root/scripts/
@@ -6,7 +6,7 @@ WORKDIR /root/
 RUN chmod a+x -R /root/scripts
 
 # Env variables
-ENV CATKIN_WS=/root/catkin_ws
+ENV ROS_WS=/root/ros2_ws
 ENV SCRIPTS_PATH=/root/scripts
 
 # Run the general and ROS dep installation

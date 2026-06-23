@@ -1,0 +1,34 @@
+name: 'Ubuntu 24.04 + ROS2 Kilted: Build'
+on:
+  push:
+    branches:
+    - 'main'
+  pull_request:
+    branches:
+    - '*'
+
+jobs:
+  build:
+    name: 'Ubuntu 24.04 + ROS2 Kilted: Build'
+    runs-on: ubuntu-latest
+    container: osrf/ros:kilted-desktop-full
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        apt update && apt install -y python3-colcon-common-extensions ros-kilted-pcl-ros libgoogle-glog-dev
+
+    - name: Release Build Test
+      shell: bash
+      run: |
+        mkdir -p $HOME/ros2_ws/src
+        cd $HOME/ros2_ws/src && ln -s $GITHUB_WORKSPACE
+        cd $HOME/ros2_ws
+        . /opt/ros/kilted/setup.sh
+        colcon build --packages-select coin_lio --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo

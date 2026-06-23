@@ -37,31 +37,29 @@ Please cite our work if you are using COIN-LIO in your research.
 
 # Setup
 ## Installation
-This package was developed on Ubuntu 20.04 using ROS Noetic. Other versions should also work but have not been tested and we do not guarantee support.
+This package was developed using ROS2 Kilted. Other ROS2 distributions should also work but have not been tested and we do not guarantee support.
 
-1. If not done yet, please [install ROS](https://wiki.ros.org/noetic/Installation), [install the proposed system dependencies](https://wiki.ros.org/noetic/Installation/Ubuntu#Dependencies_for_building_packages).
+1. If not done yet, please [install ROS2](https://docs.ros.org/en/kilted/Installation.html).
   Install some additional system dependencies:
     ```bash
-    sudo apt-get install python3-catkin-tools libgoogle-glog-dev
+    sudo apt-get install libgoogle-glog-dev
     ```
-2. Then create a catkin workspace:
+2. Then create a colcon workspace:
     ```bash
-    mkdir -p ~/catkin_ws/src
-    cd ~/catkin_ws
-    catkin init
-    catkin config --extend /opt/ros/$ROS_DISTRO
-    catkin config --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
-    catkin config --merge-devel
+    mkdir -p ~/ros2_ws/src
+    cd ~/ros2_ws
     ```
 3. Clone COIN-LIO into your workspace:
     ```bash
-    cd ~/catkin_ws/src
+    cd ~/ros2_ws/src
     git clone git@github.com:ethz-asl/coin-lio.git
     cd COIN-LIO
     ```
 4. Build COIN-LIO:
     ```bash
-    catkin build coin_lio --force-cmake
+    cd ~/ros2_ws
+    colcon build --packages-select coin_lio --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    source install/setup.bash
     ```
 
 ## Alternative Installation: Docker
@@ -79,13 +77,13 @@ you can simply use `./run_docker.sh` (without `-b`) to not re-build the image.
 The ENWIDE dataset sequences can be downloaded [here](https://projects.asl.ethz.ch/datasets/enwide).
 Run a sequence:
   ```bash
-  roslaunch coin_lio mapping_enwide.launch bag_file:=<example_bag_path.bag>
+  ros2 launch coin_lio mapping_enwide.launch.py bag_file:=<example_bag_path.bag>
   ```
 ## Running Newer College Dataset Sequences
 The Newer College Dataset sequences can be downloaded [here](https://drive.google.com/drive/u/0/folders/1uR476FzjN3PfAiCknVKtuZi3_QfVvSdA).
 Run a sequence:
   ```bash
-  roslaunch coin_lio mapping_newer_college.launch bag_file:=<example_bag_path.bag>
+  ros2 launch coin_lio mapping_newer_college.launch.py bag_file:=<example_bag_path.bag>
   ```
 ## Running COIN-LIO on your own data:
 **Note on LiDAR type:** COIN-LIO currently only supports data from Ouster LiDARs, as we use the calibration in the metadata file for the image projection model. Implementing different sensors is theoretically possible but requires a proper implementation of a projection model that works for the specific sensor. Contributions are welcome.
@@ -96,7 +94,7 @@ Since different Ouster sensors have different image projection parameters, we ne
 
 It is important to use the metadata file that corresponds to your specific sensor (more information can be found [here](https://github.com/ouster-lidar/ouster-ros/wiki/index)).
   ```bash
-  roslaunch coin_lio calibrate.launch bag_file:=<bag_path.bag> metadata_file:=<metadata_path.json> point_topic:=<pointcloud_topic>
+  ros2 launch coin_lio calibrate.launch.py bag_file:=<bag_path.bag> metadata_file:=<metadata_path.json> point_topic:=<pointcloud_topic>
   ```
   The evaluated column shift parameter will be printed at the end of the procedure.
 * **IMU:**
@@ -104,14 +102,14 @@ If you are not using the built-in IMU in the Ouster LiDAR, you need to adapt the
 ### Run COIN-LIO with your own data
 Launch with settings for your data:
   ```bash
-  roslaunch coin_lio mapping.launch metadata_file:=<metadata_path.json> column_shift:=<parameter from calibration> point_topic:=<pointcloud_topic> imu_topic:=<imu_topic> destagger:=<true/false>
+  ros2 launch coin_lio mapping.launch.py metadata_file:=<metadata_path.json> column_shift:=<parameter from calibration> point_topic:=<pointcloud_topic> imu_topic:=<imu_topic> destagger:=<true/false>
   ```
   If your data already contains [destaggered point clouds from the ouster driver](https://github.com/ouster-lidar/ouster-ros/blob/55519ed2b8a7dd7d4ae13a968b0ec88e5cada7dd/launch/common.launch#L45), set `destagger:=false`, otherwise use `destagger:=true`.
   
 
 Play your data:
   ```bash
-  rosbag play <bag_path.bag>
+  ros2 bag play <bag_path> --clock
   ```
 ### Line Artifact Removal
 The line artifact removal filter can be tested and tuned using the provided notebook:

@@ -6,12 +6,12 @@
 #include <stdexcept>
 #include "timing.h"
 
-ImageProcessor::ImageProcessor(ros::NodeHandle nh, std::shared_ptr<Projector> projector , 
+ImageProcessor::ImageProcessor(rclcpp::Node::SharedPtr node, std::shared_ptr<Projector> projector ,
     std::shared_ptr<FeatureManager> manager) : projector_(projector) {
     try {
-        loadParameters(nh);
+        loadParameters(node);
     } catch (const std::runtime_error& e) {
-        ROS_ERROR_STREAM(e.what());
+        RCLCPP_ERROR_STREAM(rclcpp::get_logger("coin_lio"), e.what());
         exit(1);
     }
 
@@ -31,37 +31,40 @@ ImageProcessor::ImageProcessor(ros::NodeHandle nh, std::shared_ptr<Projector> pr
     kernel_erosion_ = cv::Mat::ones(k_size, k_size, CV_32FC1);
 };
 
-void ImageProcessor::loadParameters(ros::NodeHandle nh) {
-    nh.param<bool>("image/reflectivity", reflectivity_, false);
-    nh.param<bool>("image/line_removal", remove_lines_, true);
-    nh.param<bool>("image/brightness_filter", brightness_filter_, true);
-    nh.param<bool>("image/blur", blur_, true);
-    nh.param<double>("image/intensity_scale", intensity_scale_, 0.25);
-    nh.param<int>("image/erosion_margin", erosion_margin_, 2);
-    std::vector<int> window;
-    nh.getParam("image/window", window);
+void ImageProcessor::loadParameters(rclcpp::Node::SharedPtr node) {
+    node->get_parameter_or("image.reflectivity", reflectivity_, false);
+    node->get_parameter_or("image.line_removal", remove_lines_, true);
+    node->get_parameter_or("image.brightness_filter", brightness_filter_, true);
+    node->get_parameter_or("image.blur", blur_, true);
+    node->get_parameter_or("image.intensity_scale", intensity_scale_, 0.25);
+    int64_t erosion_margin;
+    node->get_parameter_or("image.erosion_margin", erosion_margin, static_cast<int64_t>(2));
+    erosion_margin_ = static_cast<int>(erosion_margin);
+    std::vector<int64_t> window;
+    node->get_parameter("image.window", window);
     if (window.size() != 2) {
         throw std::runtime_error("Invalid window size");
         return;
     }
 
-    std::vector<int> masks;
-    nh.getParam("image/masks", masks);
+    std::vector<int64_t> masks;
+    node->get_parameter("image.masks", masks);
     if (masks.size() % 4 != 0) {
         throw std::runtime_error("Invalid masks, number of elements must be a multiple of 4");
         return;
     }
 
     for (int i = 0; i < masks.size()/4; i++) {
-        masks_.push_back(cv::Rect(masks[i*4], masks[i*4 +1], masks[i*4 +2],masks[i*4 +3]));
+        masks_.push_back(cv::Rect(static_cast<int>(masks[i*4]), static_cast<int>(masks[i*4 +1]),
+            static_cast<int>(masks[i*4 +2]), static_cast<int>(masks[i*4 +3])));
     }
 
-    window_size_ = cv::Size(window[0], window[1]);
+    window_size_ = cv::Size(static_cast<int>(window[0]), static_cast<int>(window[1]));
     std::vector<double> hpf;
-    nh.getParam("image/highpass", hpf);
+    node->get_parameter("image.highpass", hpf);
     high_pass_fir_ = cv::Mat(hpf).clone();
     std::vector<double> lpf;
-    nh.getParam("image/lowpass", lpf);
+    node->get_parameter("image.lowpass", lpf);
     low_pass_fir_ = cv::Mat(lpf).clone();
 }
 
