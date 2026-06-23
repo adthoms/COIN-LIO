@@ -71,7 +71,6 @@
 #include "use_ikfom.h"
 
 #define INIT_TIME (0.1)
-#define DIM_STATE (23)
 
 int add_point_size = 0, kdtree_delete_counter = 0;
 bool pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;

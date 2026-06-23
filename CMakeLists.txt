@@ -13,6 +13,7 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
+add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 message("Current CPU archtecture: ${CMAKE_SYSTEM_PROCESSOR}")
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)" )
@@ -45,7 +46,6 @@ find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
-find_package(pcl_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(rosbag2_cpp REQUIRED)
@@ -91,34 +91,27 @@ add_library(coin_lio
   src/use_ikfom.cpp
   src/projector.cpp
 )
-ament_target_dependencies(coin_lio
-  rclcpp sensor_msgs nav_msgs geometry_msgs visualization_msgs std_msgs
-  tf2 tf2_ros tf2_eigen pcl_ros pcl_conversions cv_bridge ament_index_cpp
-  builtin_interfaces)
-target_link_libraries(coin_lio
+# Deps are PUBLIC so executables linking coin_lio inherit them transitively.
+# Message packages use the ${pkg_TARGETS} form; everything else uses modern
+# namespaced targets (replaces deprecated ament_target_dependencies).
+target_link_libraries(coin_lio PUBLIC
   ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} ${OpenMP_CXX_FLAGS}
   glog::glog
-  "${cpp_typesupport_target}")
+  "${cpp_typesupport_target}"
+  rclcpp::rclcpp
+  tf2::tf2 tf2_ros::tf2_ros tf2_eigen::tf2_eigen
+  pcl_conversions::pcl_conversions cv_bridge::cv_bridge
+  ament_index_cpp::ament_index_cpp
+  ${sensor_msgs_TARGETS} ${nav_msgs_TARGETS} ${geometry_msgs_TARGETS}
+  ${visualization_msgs_TARGETS} ${std_msgs_TARGETS} ${builtin_interfaces_TARGETS})
 
-# Mapping executable
+# Mapping executable — inherits all deps transitively from coin_lio.
 add_executable(coin_lio_mapping src/laserMapping.cpp)
-ament_target_dependencies(coin_lio_mapping
-  rclcpp sensor_msgs nav_msgs geometry_msgs visualization_msgs std_msgs
-  tf2 tf2_ros tf2_eigen pcl_ros pcl_conversions cv_bridge ament_index_cpp
-  builtin_interfaces)
-target_link_libraries(coin_lio_mapping
-  coin_lio ${PCL_LIBRARIES} ${OpenCV_LIBRARIES}
-  glog::glog
-  "${cpp_typesupport_target}")
+target_link_libraries(coin_lio_mapping PUBLIC coin_lio)
 
-# Calibration executable
+# Calibration executable — inherits from coin_lio, plus rosbag2 for bag reading.
 add_executable(coin_lio_calibration src/calibration.cpp)
-ament_target_dependencies(coin_lio_calibration
-  rclcpp sensor_msgs rosbag2_cpp pcl_conversions pcl_ros cv_bridge)
-target_link_libraries(coin_lio_calibration
-  coin_lio ${PCL_LIBRARIES} ${OpenCV_LIBRARIES}
-  glog::glog
-  "${cpp_typesupport_target}")
+target_link_libraries(coin_lio_calibration PUBLIC coin_lio rosbag2_cpp::rosbag2_cpp)
 
 # Install
 install(TARGETS coin_lio coin_lio_mapping coin_lio_calibration
