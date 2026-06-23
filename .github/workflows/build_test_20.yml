@@ -17,7 +17,7 @@ jobs:
           - {name: 'Ubuntu 20.04 + ROS Noetic: Build  ', rosdistro: 'noetic', container: 'ros:noetic-ros-base-focal'}
     container: ${{ matrix.config.container }}
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v4
       with:
         token: ${{ secrets.ACCESS_TOKEN }}
 
@@ -38,7 +38,7 @@ jobs:
         ccache --max-size=1G
 
     - name: Cache ccache files
-      uses: actions/cache@v1.1.0
+      uses: actions/cache@v4
       with:
         path: ${{ env.CCACHE_DIR }}
         key: ${{ matrix.config.name }}-ccache-${{ env.CCACHE_STAMP }}
